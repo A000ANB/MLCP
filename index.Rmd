@@ -1,0 +1,154 @@
+---
+title: "Mashine Learning Course Project"
+author: "Andrei Boulgakov"
+date: "04/05/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Synopsis
+The goal of this project is to predict the manner in which they did the exercise and if there is a wrong doing - specify which mistake is it: exactly according to the specification (Class A), throw-ing the elbows to the front (Class B), lifting the dumbbellonly halfway (Class C), lowering the dumbbell only halfway(Class D) and throwing the hips to the front (Class E)  
+The data for this project come from this source: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har.  
+
+In this report I will try to find out which parameters are important for prediction (using Baruto library) and run two different ways of prediction: using Decision tree and Random Forest.  
+Since we need to do classification, I will see difference in Accuracy (not RSME) to decide on the best model.  
+By the end of the project  Iwill run 20 tests with all models.  
+
+### Executive summary
+In the report I identified that decision tree's accuracy is below 50% and unacceptible for the prediction.  
+Random forest was very accurate even if for the test was used only half of important parameters. 
+
+## Data loading and Explaratory data analyses
+
+### Data loading
+  The data for this project come from this source:   http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har  
+  
+```{r, echo=TRUE}
+tr<-read.csv("pml-training.csv", na.strings=c("NA","#DIV/0!",""))
+ts<-read.csv("pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+```
+```{r, message=FALSE, results='hide', echo=FALSE}
+library(caret)
+library(rpart)
+library(Boruta)
+library(randomForest)
+```
+  
+### Tyding data
+  First, let's remove first 7 columns which are not relevant for the test  
+```{r}
+tr2<-tr[, -c(1:7)]
+tr2$classe<-as.factor(tr2$classe)
+ts2<-ts[, -c(1:7)]
+```
+  
+  Following code identified that we have columns with NAs for most of the observations. They are not-NA for classe A only, I will remove these columns from the data set for modeling.  
+```{r}
+a<-as.data.frame(colSums(is.na(tr2)))
+a<-cbind(rownames(a), a)
+colnames(a)<-c("act","sum")
+# Explore classe of mostly-NA records:
+t19226<-which(a$sum >0 )
+tr19226<-tr2[t19226,]
+table(tr19226$classe)
+
+#Continue only with mostly populated columns:
+t0<-which(a$sum==0)
+trFull<-tr2[,t0]
+```
+### Explaratory data analyses
+Now we will analyze the data and try different models.  
+```{r}
+set.seed(7779)
+part<-createDataPartition(y=trFull$classe, p=.7,list=F)
+train<-trFull[part,]
+test<-trFull[-part,]
+```
+  
+For verification we will use "test" subset.  
+Now I want to find out which parameters are important using Baruto library:  
+```{r, message=FALSE, results='hide'}
+set.seed(7779)
+boruta<-Boruta(classe~., data=train, doTrace=2)
+#plot(boruta, las=2, cex.axis=.7)
+plotImpHistory(boruta)
+```
+  
+  It seems that all parameters left after NA cleaning are important.  
+  
+### Model examination
+  Let's run rpart model:
+```{r}
+set.seed(7779)
+fit53RP<-train(classe~., data=train, method="rpart")
+pred53RP<-predict(fit53RP, newdata=test)
+cm<-confusionMatrix(pred53RP, test$classe)
+cm$overall["Accuracy"]
+```
+  
+  Comment on low accuracy: Accuracy : `r cm$overall["Accuracy"]` 
+  This level is not acceptable for the prediction.
+  
+Let's run some of Random forest. We need to identify best ntree and mtry parameters:   
+```{r}
+set.seed(7779)
+fit53RF<-randomForest(classe~., data=train)
+plot(fit53RF, cex=0.7, main='Error vs No. of trees plot')
+```
+  
+  As per plot we can use ntree = 200, to identify best mtry I will run tuneRF:
+```{r}
+tuneRF(train[,-53], train$classe, stepFactor = 0.05, plot=T, ntreeTry=200, trace=T, improve=.05)
+```
+  
+  mtry 7 looks the best choice. I will create the model with all 53 predictors and then with the best 33:
+```{r}
+fit53RF<-randomForest(formula = classe ~ ., data = train, ntree = 200,      mtry = 7, importance = F, proximity = F)
+```
+  ...and with 33 the most important predictors only:
+```{r}
+fit33RF<- randomForest(formula =  classe ~ roll_belt + pitch_belt + yaw_belt + total_accel_belt + 
+    gyros_belt_x + gyros_belt_y + gyros_belt_z + accel_belt_x + 
+    accel_belt_y + accel_belt_z + magnet_belt_x + magnet_belt_y + 
+    magnet_belt_z + roll_arm + pitch_arm + yaw_arm + total_accel_arm + 
+    gyros_arm_x + gyros_arm_y + gyros_arm_z + accel_arm_x + accel_arm_y + 
+    accel_arm_z + magnet_arm_x + magnet_arm_y + magnet_arm_z + 
+    roll_dumbbell + pitch_dumbbell + yaw_dumbbell + total_accel_dumbbell + 
+    gyros_dumbbell_x + gyros_dumbbell_y + gyros_dumbbell_z,
+    data = train, ntree = 200,      mtry = 7, importance = F, proximity = F)
+```
+  
+OOB estimate of  error rates are 1.43% for 33 predictors and 0.6% for 53 predictors
+```{r echo=FALSE}
+pred53<-predict(fit53RF, test)
+pred33<-predict(fit33RF, test)
+cm53<-confusionMatrix(pred53, test$classe)
+cm33<-confusionMatrix(pred33, test$classe)
+```
+  
+  Accuracy for 53 predictors is `r cm53$overall["Accuracy"]` and with 33 predictors: `r cm33$overall["Accuracy"]`  
+  
+### Conclusion about models
+The random forest with 53 predictors is the best, while random forest with 33 the most important predictors is also good enough and can be used.  
+Decision tree is not accure enough.
+  
+## Test results
+
+Althoug random forest with 53 predictors is the best one, I'd love to see how all examined models performed.  
+```{r echo=FALSE}
+pred53ts<-predict(fit53RF, ts)
+pred33ts<-predict(fit33RF, ts)
+predRPts<-predict(fit53RP, ts)
+```
+Let's see predictions for all 3 models:  
+```{r}
+cbind(as.data.frame(pred53ts), as.data.frame(pred33ts), as.data.frame(predRPts))
+```
+  
+  Both RF models predicted same; Decision tree predicted well only A classe, all other classes are mixed.  
+  
+  
+  
